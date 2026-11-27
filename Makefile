@@ -24,7 +24,7 @@ test:
 	$(ZIG) test $(SRC)
 
 run: build
-	./$(OUT_BIN)
+	@case "$(OUT_BIN)" in /*|[A-Za-z]:*) "$(OUT_BIN)" ;; *) "./$(OUT_BIN)" ;; esac
 
 clean:
 	rm -rf $(OUT_DIR) .zig-cache zig-out *.o *.pdb

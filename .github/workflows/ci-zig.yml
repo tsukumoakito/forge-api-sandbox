@@ -57,7 +57,7 @@ jobs:
           tar -xJf /tmp/zig.tar.xz --strip-components=1 -C /opt/zig
           ln -sf /opt/zig/zig /usr/local/bin/zig
 
-          make clean build test run OUT_DIR="/work/out"
+          make clean build test run OUT_DIR="out"
           EOF
 
       - name: Upload artifact
