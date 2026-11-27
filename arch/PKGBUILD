@@ -1,22 +1,32 @@
 # Maintainer: tsukumo-forge-sandbox-lab
 pkgname=linux-sandbox
-pkgver=6.12
+pkgver=7.3.6
 pkgrel=1
-pkgdesc="Minimal Arch Linux kernel package for GitHub Actions CI sandbox verification"
+pkgdesc="Minimal & fastest latest Arch Linux kernel package for CI verification"
 arch=('x86_64')
 url="https://www.kernel.org/"
 license=('GPL-2.0-only')
 makedepends=('bc' 'cpio' 'gettext' 'kmod' 'libelf' 'perl' 'python' 'tar' 'xz')
 options=('!strip' '!debug')
-source=("https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-${pkgver}.tar.xz")
-sha256sums=('SKIP')
+source=("https://cdn.kernel.org/pub/linux/kernel/v7.x/linux-${pkgver}.tar.xz")
+sha256sums=('8183d475a76a0faffa92d6cd500af421f589dfd0300a0f1060bb875e11d45723')
+
+prepare() {
+    cd "linux-${pkgver}"
+    make allnoconfig
+    ./scripts/config \
+        --enable 64BIT \
+        --enable SMP \
+        --enable MODULES \
+        --enable PRINTK \
+        --enable BINFMT_ELF \
+        --enable TTY
+    make olddefconfig
+}
 
 build() {
     cd "linux-${pkgver}"
-    make x86_64_defconfig
-    ./scripts/config --disable WERROR
-    make olddefconfig
-    make -j"$(nproc)" KCFLAGS="-Wno-unterminated-string-initialization" bzImage modules
+    make -j"$(nproc)" bzImage modules
 }
 
 package() {
@@ -24,7 +34,8 @@ package() {
     local kver
     kver="$(make -s kernelrelease)"
 
-    install -Dm644 arch/x86/boot/bzImage "${pkgdir}/usr/lib/modules/${kver}/vmlinuz"
-    make INSTALL_MOD_PATH="${pkgdir}/usr" INSTALL_MOD_STRIP=1 modules_install
+    install -Dm644 "$(make -s image_name)" "${pkgdir}/usr/lib/modules/${kver}/vmlinuz"
+    echo "${pkgname}" | install -Dm644 /dev/stdin "${pkgdir}/usr/lib/modules/${kver}/pkgbase"
+    make INSTALL_MOD_PATH="${pkgdir}/usr" INSTALL_MOD_STRIP=1 DEPMOD=/doesnt/exist modules_install
     rm -f "${pkgdir}/usr/lib/modules/${kver}/build" "${pkgdir}/usr/lib/modules/${kver}/source"
 }
