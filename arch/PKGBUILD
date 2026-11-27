@@ -36,6 +36,6 @@ package() {
 
     install -Dm644 "$(make -s image_name)" "${pkgdir}/usr/lib/modules/${kver}/vmlinuz"
     echo "${pkgname}" | install -Dm644 /dev/stdin "${pkgdir}/usr/lib/modules/${kver}/pkgbase"
-    make INSTALL_MOD_PATH="${pkgdir}/usr" INSTALL_MOD_STRIP=1 DEPMOD=/doesnt/exist modules_install
+    make INSTALL_MOD_PATH="${pkgdir}/usr" INSTALL_MOD_STRIP=1 DEPMOD=true modules_install
     rm -f "${pkgdir}/usr/lib/modules/${kver}/build" "${pkgdir}/usr/lib/modules/${kver}/source"
 }
