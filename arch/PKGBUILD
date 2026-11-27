@@ -1,0 +1,28 @@
+# Maintainer: tsukumo-forge-sandbox-lab
+pkgname=linux-sandbox
+pkgver=6.12
+pkgrel=1
+pkgdesc="Minimal Arch Linux kernel package for GitHub Actions CI sandbox verification"
+arch=('x86_64')
+url="https://www.kernel.org/"
+license=('GPL-2.0-only')
+makedepends=('bc' 'cpio' 'gettext' 'kmod' 'libelf' 'perl' 'python' 'tar' 'xz')
+options=('!strip' '!debug')
+source=("https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-${pkgver}.tar.xz")
+sha256sums=('SKIP')
+
+build() {
+    cd "linux-${pkgver}"
+    make x86_64_defconfig
+    make -j"$(nproc)" bzImage modules
+}
+
+package() {
+    cd "linux-${pkgver}"
+    local kver
+    kver="$(make -s kernelrelease)"
+
+    install -Dm644 arch/x86/boot/bzImage "${pkgdir}/usr/lib/modules/${kver}/vmlinuz"
+    make INSTALL_MOD_PATH="${pkgdir}/usr" INSTALL_MOD_STRIP=1 modules_install
+    rm -f "${pkgdir}/usr/lib/modules/${kver}/build" "${pkgdir}/usr/lib/modules/${kver}/source"
+}
