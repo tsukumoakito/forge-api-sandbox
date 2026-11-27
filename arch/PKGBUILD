@@ -14,7 +14,9 @@ sha256sums=('SKIP')
 build() {
     cd "linux-${pkgver}"
     make x86_64_defconfig
-    make -j"$(nproc)" bzImage modules
+    ./scripts/config --disable WERROR
+    make olddefconfig
+    make -j"$(nproc)" KCFLAGS="-Wno-unterminated-string-initialization" bzImage modules
 }
 
 package() {

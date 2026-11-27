@@ -38,27 +38,27 @@ jobs:
       - name: Install Zig ${{ matrix.zig_version }}, build, test & run in Arch Linux
         run: |
           mkdir -p "$PWD/out"
-          docker run --rm \
+          docker run --rm -i \
             -v "${{ github.workspace }}:/work" \
             -w /work \
             -e ZIG_VERSION="${{ matrix.zig_version }}" \
             archlinux:latest \
-            bash -euo pipefail -c '
-              pacman -Syu --noconfirm --needed curl jq make tar xz
+            bash -euo pipefail -s <<'EOF'
+          pacman -Syu --noconfirm --needed curl jq make tar xz
 
-              meta=$(curl -fsSL https://ziglang.org/download/index.json)
-              url=$(printf "%s" "$meta" | jq -r --arg v "$ZIG_VERSION" ".[$v][\"x86_64-linux\"].tarball")
-              sum=$(printf "%s" "$meta" | jq -r --arg v "$ZIG_VERSION" ".[$v][\"x86_64-linux\"].shasum")
-              [ -n "$url" ] && [ "$url" != "null" ]
+          meta=$(curl -fsSL https://ziglang.org/download/index.json)
+          url=$(printf "%s" "$meta" | jq -r --arg v "$ZIG_VERSION" '.[$v]["x86_64-linux"].tarball')
+          sum=$(printf "%s" "$meta" | jq -r --arg v "$ZIG_VERSION" '.[$v]["x86_64-linux"].shasum')
+          [ -n "$url" ] && [ "$url" != "null" ]
 
-              curl -fsSL "$url" -o /tmp/zig.tar.xz
-              echo "${sum}  /tmp/zig.tar.xz" | sha256sum -c -
-              mkdir -p /opt/zig
-              tar -xJf /tmp/zig.tar.xz --strip-components=1 -C /opt/zig
-              ln -sf /opt/zig/zig /usr/local/bin/zig
+          curl -fsSL "$url" -o /tmp/zig.tar.xz
+          echo "${sum}  /tmp/zig.tar.xz" | sha256sum -c -
+          mkdir -p /opt/zig
+          tar -xJf /tmp/zig.tar.xz --strip-components=1 -C /opt/zig
+          ln -sf /opt/zig/zig /usr/local/bin/zig
 
-              make clean build test run OUT_DIR="/work/out"
-            '
+          make clean build test run OUT_DIR="/work/out"
+          EOF
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
