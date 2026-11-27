@@ -2,21 +2,60 @@ name: CI Arch Kernel Build
 
 on:
   push:
-    branches: [ master, dev ]
-    paths:
-      - 'arch/**'
-      - '.github/workflows/ci-arch-kernel.yml'
+    tags:
+      - 'v*'
   workflow_dispatch:
 
 permissions: {}
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/master' && !startsWith(github.ref, 'refs/tags/') }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 
 jobs:
+  verify-trigger:
+    name: Verify CI Trigger Policy
+    if: github.server_url == 'https://github.com'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      allow_publish: ${{ steps.check.outputs.allow_publish }}
+      pkg_tag_suffix: ${{ steps.check.outputs.pkg_tag_suffix }}
+
+    steps:
+      - name: Checkout minimal git history
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          sparse-checkout: |
+            .github
+
+      - name: Validate trigger policy
+        id: check
+        run: |
+          if [ "${{ github.event_name }}" = "push" ] && [ "${{ github.ref_type }}" = "tag" ]; then
+            echo "Tag push detected: ${{ github.ref_name }} (${{ github.sha }})"
+            git fetch --no-tags --filter=blob:none origin refs/heads/master
+            if ! git merge-base --is-ancestor "${{ github.sha }}" FETCH_HEAD; then
+              echo "::error::Tag '${{ github.ref_name }}' is NOT on 'master'. Packages will only be built from master tags."
+              exit 1
+            fi
+            safe_tag=$(printf '%s' "${{ github.ref_name }}" | tr '/+' '--')
+            echo "allow_publish=true" >> "$GITHUB_OUTPUT"
+            echo "pkg_tag_suffix=-${safe_tag}" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "Manual trigger on '${{ github.ref_name }}' (test-only mode: Packages save is disabled)."
+            echo "allow_publish=false" >> "$GITHUB_OUTPUT"
+            echo "pkg_tag_suffix=" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::Unsupported trigger '${{ github.event_name }}' on '${{ github.ref }}'."
+            exit 1
+          fi
+
   build-arch-kernel:
     name: Arch Linux Kernel Build
+    needs: verify-trigger
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -60,6 +99,7 @@ jobs:
           ls -lh "$PWD/pkg_out"
 
       - name: Upload kernel package artifact
+        if: needs.verify-trigger.outputs.allow_publish == 'true'
         uses: actions/upload-artifact@v7
         with:
           name: arch-kernel-x86_64
@@ -68,7 +108,8 @@ jobs:
 
   publish-package:
     name: Push Arch Kernel to GitHub Packages
-    needs: build-arch-kernel
+    needs: [ verify-trigger, build-arch-kernel ]
+    if: success() && needs.verify-trigger.outputs.allow_publish == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -92,10 +133,13 @@ jobs:
       - name: Push kernel package to GitHub Packages (GHCR)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG_SUFFIX: ${{ needs.verify-trigger.outputs.pkg_tag_suffix }}
         run: |
           echo "$GH_TOKEN" | oras login ghcr.io -u "${{ github.actor }}" --password-stdin
           repo_lower=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          pkg_tag="arch-kernel-x86_64${TAG_SUFFIX}"
+          echo ">>> Pushing ${pkg_tag} to ghcr.io/${repo_lower}:${pkg_tag}"
           cd pkg_in
-          oras push "ghcr.io/${repo_lower}:arch-kernel-x86_64" \
+          oras push "ghcr.io/${repo_lower}:${pkg_tag}" \
             --annotation "org.opencontainers.image.source=https://github.com/${{ github.repository }}" \
             *.pkg.tar.zst

@@ -2,25 +2,66 @@ name: CI Zig Cross-Platform Matrix
 
 on:
   push:
-    branches: [ master, dev ]
-    paths:
-      - 'src/**'
-      - 'Makefile'
-      - '.github/workflows/ci-zig.yml'
+    tags:
+      - 'v*'
   workflow_dispatch:
 
 permissions: {}
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/master' && !startsWith(github.ref, 'refs/tags/') }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 
 jobs:
+  # ------------------------------------------------------------------
+  # 0. GitHub 限定 & master 上のタグ / dev 手動実行 ポリシー検証
+  # ------------------------------------------------------------------
+  verify-trigger:
+    name: Verify CI Trigger Policy
+    if: github.server_url == 'https://github.com'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      allow_publish: ${{ steps.check.outputs.allow_publish }}
+      pkg_tag_suffix: ${{ steps.check.outputs.pkg_tag_suffix }}
+
+    steps:
+      - name: Checkout minimal git history
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          sparse-checkout: |
+            .github
+
+      - name: Validate trigger policy
+        id: check
+        run: |
+          if [ "${{ github.event_name }}" = "push" ] && [ "${{ github.ref_type }}" = "tag" ]; then
+            echo "Tag push detected: ${{ github.ref_name }} (${{ github.sha }})"
+            git fetch --no-tags --filter=blob:none origin refs/heads/master
+            if ! git merge-base --is-ancestor "${{ github.sha }}" FETCH_HEAD; then
+              echo "::error::Tag '${{ github.ref_name }}' is NOT on 'master'. Packages will only be built from master tags."
+              exit 1
+            fi
+            safe_tag=$(printf '%s' "${{ github.ref_name }}" | tr '/+' '--')
+            echo "allow_publish=true" >> "$GITHUB_OUTPUT"
+            echo "pkg_tag_suffix=-${safe_tag}" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "Manual trigger on '${{ github.ref_name }}' (test-only mode: Packages save is disabled)."
+            echo "allow_publish=false" >> "$GITHUB_OUTPUT"
+            echo "pkg_tag_suffix=" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::Unsupported trigger '${{ github.event_name }}' on '${{ github.ref }}'."
+            exit 1
+          fi
+
   # ------------------------------------------------------------------
   # 1 & 2. Ubuntu 軽量化（必要時のみ）-> Arch Linux コンテナ -> Zig 0.17.1 / 0.16.0
   # ------------------------------------------------------------------
   zig-archlinux:
     name: Arch Linux / Zig ${{ matrix.zig_version }}
+    needs: verify-trigger
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -69,6 +110,7 @@ jobs:
           EOF
 
       - name: Upload artifact
+        if: needs.verify-trigger.outputs.allow_publish == 'true'
         uses: actions/upload-artifact@v7
         with:
           name: zig-${{ matrix.zig_version }}-archlinux
@@ -80,6 +122,7 @@ jobs:
   # ------------------------------------------------------------------
   zig-macos:
     name: macOS / Zig ${{ matrix.zig_version }}
+    needs: verify-trigger
     runs-on: macos-latest
     permissions:
       contents: read
@@ -114,6 +157,7 @@ jobs:
         run: make clean build test run OUT_DIR="out"
 
       - name: Upload artifact
+        if: needs.verify-trigger.outputs.allow_publish == 'true'
         uses: actions/upload-artifact@v7
         with:
           name: zig-${{ matrix.zig_version }}-macos
@@ -125,6 +169,7 @@ jobs:
   # ------------------------------------------------------------------
   zig-windows:
     name: Windows / Zig ${{ matrix.zig_version }}
+    needs: verify-trigger
     runs-on: windows-latest
     permissions:
       contents: read
@@ -164,6 +209,7 @@ jobs:
         run: make clean build test run OUT_DIR="out"
 
       - name: Upload artifact
+        if: needs.verify-trigger.outputs.allow_publish == 'true'
         uses: actions/upload-artifact@v7
         with:
           name: zig-${{ matrix.zig_version }}-windows
@@ -171,11 +217,12 @@ jobs:
           retention-days: 1
 
   # ------------------------------------------------------------------
-  # 全 6 バイナリを GitHub Packages (ghcr.io) に保存
+  # master タグ時のみ、世代別タグ付きで GitHub Packages (ghcr.io) に保存
   # ------------------------------------------------------------------
   publish-packages:
     name: Push Zig binaries to GitHub Packages
-    needs: [ zig-archlinux, zig-macos, zig-windows ]
+    needs: [ verify-trigger, zig-archlinux, zig-macos, zig-windows ]
+    if: success() && needs.verify-trigger.outputs.allow_publish == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -202,16 +249,19 @@ jobs:
         run: |
           echo "$GH_TOKEN" | oras login ghcr.io -u "${{ github.actor }}" --password-stdin
 
-      - name: Push each binary to GitHub Packages
+      - name: Push each binary to GitHub Packages (versioned tag)
+        env:
+          TAG_SUFFIX: ${{ needs.verify-trigger.outputs.pkg_tag_suffix }}
         run: |
           repo_lower=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
           for dir in packages_in/*; do
             [ -d "$dir" ] || continue
-            tag=$(basename "$dir")
-            echo ">>> Pushing $tag to ghcr.io/${repo_lower}:${tag}"
+            base_tag=$(basename "$dir")
+            pkg_tag="${base_tag}${TAG_SUFFIX}"
+            echo ">>> Pushing ${pkg_tag} to ghcr.io/${repo_lower}:${pkg_tag}"
             (
               cd "$dir"
-              oras push "ghcr.io/${repo_lower}:${tag}" \
+              oras push "ghcr.io/${repo_lower}:${pkg_tag}" \
                 --annotation "org.opencontainers.image.source=https://github.com/${{ github.repository }}" \
                 *
             )
